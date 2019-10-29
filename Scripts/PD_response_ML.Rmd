@@ -1,18 +1,75 @@
-library(kernlab)
-library(caret)
-library(tidyverse)
-SEED = 123456
-set.seed(SEED)
-source("Scripts/helpers.R")
-################ Simulations ######################
-N <- 2000
+---
+title: "PK modelling, Machine Learning and the caret package"
+author: "Carlos S Traynor"
+date: "28/10/2019"
+output: html_document
+---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## PD Response
+
+In this presentation we are going to learn new Machine Learning algorithms, how to implement them in R and use them to make predictions in PD Response datasets. On the way we are going to learn how to generate data and check model predictions.
+
+Sometimes we are looking whether we can predict the occurrence of an adverse event from variables, such as Dose, Weight, genotype. In this case it may be useful to use algorithms that can map variables to response and looking for patterns in the data and searching for hypothesis. Machine Learning has becoming increasingly popular a framework to make predictions using a 'black-box' model. In this workshop we are going to make an effort to see inside the black-box and understand its mechanism.
+
+## The model
+
+Let's assume then the following model:
+
+```{r}
+library(ggdag)
+pk_dag <- dagify( Y ~ Cmax + U, Cmax ~ Dose + VC, VC ~ Sex + Weight, Dose ~ Weight)
+pk_dag %>% ggdag() + theme_dag_blank()
+```
+
+The model published:
+$$
+VC_{i} = VC_{ref} * \left (\frac{BW_i}{BW_{ref}}\right )^{VC_{BW}}  \cdot \left (e^{VC_{SEX}}\right )^{SEX} \\
+C_{max} = \frac{Dose}{VC_i}
+$$
+
+## Generate a dataset
+
+### Load libraries
+```{r}
+library(tidyverse)
+library(kernlab)
+library(pROC) 
+library(caret)
+source("Scripts/helpers.R")
+```
+
+
+Generating data from R is not difficult. Indeed R may be the best suited language to generate data using the many probability distribution available in **stats** **base** package, and other packages. 
+
+### 1.1 A binomial dataset
+
+Simulate weight variable.
+
+```{r}
+N <- 2000
+bw <-  rnorm(N, 0, 2.5) + 80
+tibble::enframe(bw) %>% 
+  ggplot(aes(x = bw)) +
+  geom_density(fill = "black") +
+  coord_cartesian() +
+  xlab("Body weight distribution")
+```
+
+```{r}
 simdat <- tibble(
   id = paste("id", 1:N, sep = "_"),
   bw = rnorm(N, 0, 2.5) + 80,
   sex = rbinom(N, 1, .5) %>% as.factor
 )
+```
 
+
+Now let us assume further that dose is adjusted using a PK/PD model to obtain a peak value that has not generated toxicity in Clinical trials, (our causal model):
+```{r}
 pkpop_vc <- function(bw, sex) {
   vcref <- 3.6
   bwref <- 80
@@ -26,8 +83,11 @@ simdat <- simdat %>%
   mutate(vc = pkpop_vc(bw, sex),
          dose = bw * 10^-3,
          cmax = (dose / vc) ) ## cmax in ng/mL
+```
 
 
+Finally we simulate the occurrence of the adverse event using a Bernoulli trial. 
+```{r}
 pr_bernouilli <- function(cmax) {
   beta1 <- 2
   eta <- scale_this(cmax) * beta1 ## normalise to obtain reasonable range of probabilities.
@@ -39,17 +99,24 @@ simdat <- simdat %>%
   mutate(events = pr_bernouilli(cmax))
 
 simdat %>% group_by(events) %>% count()
+```
 
-### Step-back
-
+Take a step-back and see what would be a common available dataset. Prepare the dataset:
+```{r}
 fitdat <- simdat %>%
   mutate(Class = if_else(events == 1, "Fail", "Response")) %>%
   select(bw, sex, dose, Class)
+```
 
-### Two modellers are going to be tested on this an ML vs a PK approach.
-## The goal is to predict the event class.
-## First, we split the data into two groups: a training set and a test set. To do this, the createDataPartition function is used:
 
+### Fit the model
+
+Now the dataset is given to us and let's assume a PK modeller and a Machine Learning analyst working (together?) in this dataset. While the PK modeller has a clear understanding of the problem the Machine Learning scientist opts for using a fancy Machine Learning approach.
+
+## Prepare the dataset in the caret package
+
+First, we split the data into two groups: a training set and a test set. To do this, the createDataPartition function is used:
+```{r}
 inTrain <- createDataPartition(
   y = fitdat$Class,
   ## the outcome data
@@ -64,10 +131,14 @@ testing <- fitdat[-inTrain, ]
 
 nrow(training)
 nrow(testing)
+```
 
-## To fit a model in caret use the train function.
-## For example a partial least squared discriminant analysis (PLSDA) model.
 
+## Example
+
+To fit a model in caret use the train function. For example a partial least squared discriminant analysis (PLSDA) model.
+
+```{r}
 plsFit <- train(
   Class ~ .,
   data = training,
@@ -78,8 +149,18 @@ plsFit <- train(
 )
 
 plsFit
+```
 
-# Set conditions for training model and cross-validation: 
+```{r, echo=FALSE}
+# Define variable containing url
+url <- "https://tidymodels.github.io/rsample/articles/Applications/diagram.png"
+```
+
+## The caret philosophy
+<center><img src="`r url`"></center>
+
+Set conditions for training model and cross-validation: 
+```{r}
 number <- 5
 repeats <- 2
 control <- trainControl(method = "repeatedcv", 
@@ -90,11 +171,12 @@ control <- trainControl(method = "repeatedcv",
                         index = createResample(training$Class, repeats*number), 
                         summaryFunction = multiClassSummary, 
                         allowParallel = TRUE)
+```
 
-### Fit using ML method
-## A naive machine learning programmer considers that using the variables sex and age and a Suppot Vector Machine model is the best option for such a problem.
+## The Data driven approach
 
-# Train SVM: 
+The ML modeller uses a Support Vector Machine with an advanced Kernel, the radial basis function kernel.
+```{r}
 svmFit <-  ksvm(Class ~ . , 
             data = training %>%
               mutate_if(is_double, scale_this),
@@ -103,57 +185,41 @@ svmFit <-  ksvm(Class ~ . ,
             epsilon = 0.1, 
             prob.model = TRUE, 
             cross = 10)
+svmFit
+```
 
-## Train logistic model using PK knowledge
+## The PK modeller approach
+
+The PK modeller opts for a logistic model using PK modelling.
+
+```{r}
 pk_training <- training %>%
   mutate(vc = pkpop_vc(bw, sex),
          cmax = (dose / vc) )
 
 # Train Logistic Model: 
-
 logistic <- train(factor(Class) ~ cmax, 
                   data = pk_training, 
                   method = "glm", 
                   preProcess = c("center", "scale"),
                   trControl = control)
 coef(logistic$finalModel)
-#-----------------------------------
-#  Compare between the two models
-#-----------------------------------
+```
 
-# Function calculates probabilities: 
-# Function calculates probabilities: 
+## Making predictions 
 
-predict_prob <- function(model_selected, modeller = c("ML", "PK")) {
-    predict(model_selected, 
-            testing %>%
-              mutate(vc = pkpop_vc(bw, sex),
-                     cmax = (dose / vc) ) %>%
-              mutate_if(is_double, scale_this),
-            type = "prob") %>% 
-      as.data.frame() %>%
-      pull(Fail) %>%
-      return()
-}
-
-# Use this function: 
+Finally we must compare how both models performs.
+```{r}
+## Calulate predicted probabilities
 pred_logistic <- predict_prob(logistic, "PK")
 pred_svm <- predict_prob(svmFit, "ML")
 
-# Function calculates AUC: 
 
-library(pROC) 
-
-test_auc <- function(prob) {
-  roc(testing$Class, prob) 
-}
-
-# Use this function: 
+# Calculate AUC
 auc_logistic <- test_auc(pred_logistic)
 auc_svm <- test_auc(pred_svm)
 
 # Create a data frame for comparing: 
-
 df_auc <- bind_rows(tibble(TPR = auc_logistic$sensitivities, 
                                FPR = 1 - auc_logistic$specificities, 
                                Model = "Logistic, PK modeller"), 
@@ -171,35 +237,38 @@ df_auc %>%
   labs(x = "FPR (1 - Specificity)", 
        y = "TPR (Sensitivity)", 
        title = "ROC Curve and AUC: Logistic vs SVM")
+```
 
-
-# Compare AUC: 
+We can also compare the AUC:
+I
+```{r}
 lapply(list(auc_logistic, auc_svm), function(x) {x[["auc"]]})
+```
 
-
-# Results based on test data: 
+Or a more detailed report based on the test data:
+```{r}
 lapply(list(logistic, svmFit), 
        function(model) {confusionMatrix(predict(model, testing %>% 
                                                   mutate(vc = pkpop_vc(bw, sex),
                                                          cmax = (dose / vc) ) %>%
                                                   mutate_if(is_double, scale_this)
                                                   ), testing$Class, positive = "Response")})
+```
 
+## But how do SVM work?
 
-## How do SVM work?
+SVM contruct an optimal separating hyperplane between two classes. 
+Let's visualise this with a simulation, here is the sample data:
+
+```{r}
 N <- 1000
-
 # Training
 simdat <- tibble(
   target_1 = runif(N),
   target_2 = runif(N)
 )
-
 simdat <- simdat %>%
   mutate(y = if_else( target_2 > target_1, 1, -1) )
-
-
-
 inTrain <- createDataPartition(
   y = simdat$y,
   ## the outcome data
@@ -207,18 +276,19 @@ inTrain <- createDataPartition(
   ## percentage of data in training set
   list = FALSE
 )
-
 ## createDataPartition does a stratified random split of the data.
 training <- simdat[ inTrain, ]
 testing <- simdat[-inTrain, ]
-
 p1 <- training %>%
   mutate_at("y", as.factor) %>%
   ggplot(aes(x = target_1, y = target_2, colour = y)) +
   geom_point() + theme_bw()
 
 p1 + ggtitle("Training data")
+```
 
+The SVs are plotted here: 
+```{r}
 # Vanilldadot gives a linear SVM
 fit1 <- ksvm(factor(y) ~ .,
              data = training,
@@ -236,8 +306,11 @@ SV1 %>%
   mutate_if(is_double, scale_this) %>%
   ggplot(aes(x = target_1, y = target_2, colour = y)) +
   geom_point()  + theme_bw()  + ggtitle("Support vectors")
+```
 
-# Generate data for the decision line
+We can also extract the parameters of the decision line (i.e. its normal vector), and manually plot decision line and data:
+
+```{r}
 w <- colSums(fit1@xmatrix[[1]] * fit1@coef[[1]])
 b <- b(fit1)
 
@@ -251,63 +324,43 @@ p2 <- testing %>%
   geom_abline(intercept = (b-1)/w[1], slope = -w[2]/w[1], linetype = 2) 
 
 p2 + ggtitle("Decision boundary - test data")
+```
 
-### Adding genomic variables
+## Genetic data and the high-dimensional nightmare
 
-################ Simulations ######################
+Let us assume that we have received some genetic data from a sample of patients. Maybe we can explain some unobserved factors from our model. But how can we add these predictors?
+Let us first simulate the scenario:
+```{r}
 N <- 100
 n_gene <- 150
 genesim <- matrix(rbinom(N*n_gene, 1, .7) , ncol = n_gene)
 colnames(genesim) <- paste("gene_", 1:n_gene, sep = "_")
-
-
 simdat <- tibble(
   id = paste("id", 1:N, sep = "_"),
   bw = rnorm(N, 0, 2.5) + 80,
   sex = rbinom(N, 1, .5) %>% as.factor
 )
-
 simdat <- bind_cols(simdat, genesim %>% as.data.frame())
 simdat[1:6, 1:6]
+```
 
-pkpop_vc <- function(bw, sex) {
-  vcref <- 3.6
-  bwref <- 80
-  vcbw <- .597
-  vcsex <- .152
-  vc <- vcref * (bw / bwref)^(vcbw) * exp(vcsex)^I(sex == "1") 
-  vc %>% as.double()
-}
-
+As before we calculate the Cmax, and the probability of having an event.
+```{r}
 simdat <- simdat %>% 
   mutate(vc = pkpop_vc(bw, sex),
          dose = bw * 10^-3,
          cmax = (dose / vc) ) ## cmax in ng/mL
-
-
-pr_bernouilli_gene <- function(dat) {
-  beta1 <- 2
-  gene_marker <- paste("gene_", sample(1:n_gene, 6), sep = "_")
-  beta_gene <- c(0.9, -0.2, 0.5, -2.2, 0.7,  1.5)
-  
-  eta <- scale_this(dat$cmax) * beta1 
-  eta <- eta + (  as.matrix( dat %>% select(gene_marker))  %*% beta_gene  ) ## use R matrix multiplication
-  pr <- 1 / (1 + exp(eta))
-  rbinom(N, 1, pr)
-}
-
 simdat <- simdat %>%
   mutate(events = pr_bernouilli_gene(.))
-
 simdat %>% group_by(events) %>% count()
+```
 
+
+We prepare to fit a model with caret:
+```{r}
 fitdat_gene <- simdat %>%
   mutate(Class = if_else(events == 1, "Fail", "Response")) %>%
   select(-id, -vc, -cmax, -events)
-
-### Two modellers are going to be tested on this an ML vs a PK approach.
-## The goal is to predict the event class.
-## First, we split the data into two groups: a training set and a test set. To do this, the createDataPartition function is used:
 
 inTrain <- createDataPartition(
   y = fitdat_gene$Class,
@@ -323,20 +376,27 @@ testing_gene <- fitdat_gene[-inTrain, ]
 
 nrow(training_gene)
 nrow(testing_gene)
-
-### Fit using ML method
-## A naive Pk modeller has forgotten the course of dimensionality
-## Train logistic model using PK knowledge
 pk_training_gene <- training_gene %>%
   mutate(vc = pkpop_vc(bw, sex),
          cmax = (dose / vc) )
-
+control <- trainControl(method = "repeatedcv", 
+                        number = number , 
+                        repeats = repeats, 
+                        classProbs = TRUE, 
+                        savePredictions = "final", 
+                        index = createResample(pk_training_gene$Class, repeats*number), 
+                        summaryFunction = multiClassSummary, 
+                        allowParallel = TRUE)
 logistic <- train(factor(Class) ~ . - dose - sex - bw - vc, 
                   data = pk_training_gene %>%
                     mutate_at("cmax", scale_this), 
                   method = "glm", 
                   trControl = control)
 warnings()
+```
+
+So we call our Machine Learning colleague and he says that he remembers that we can use penalised regression in this case:
+```{r}
 cctrl1 <- trainControl(method="cv",
                        number=3,
                        returnResamp="all",
@@ -350,18 +410,17 @@ logisticnet <- train(factor(Class) ~ . - dose - sex - bw - vc,
                     metric = "ROC",
                     trControl = cctrl1,
                     tuneGrid = expand.grid(alpha = 1,lambda = seq(0.001,0.1,by = 0.001)))
+```
 
-plot(logisticnet)
-# best parameter
+
+So how does it work?
+```{r}
 coef(logisticnet$finalModel, logisticnet$bestTune$lambda)
-glmnet::plot.glmnet(logisticnet$finalModel)
+```
 
+
+```{r}
 lasso_mod <- logisticnet$finalModel
-
 plot_lasso_norm(lasso_mod)
+```
 
-#### DAGs
-
-library(ggdag)
-pk_dag <- dagify( Y ~ Cmax + U, Cmax ~ Dose + VC, VC ~ Sex + Weight, Dose ~ Weight)
-pk_dag %>% ggdag() + theme_dag_blank()
