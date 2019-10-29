@@ -31,10 +31,9 @@ simdat <- simdat %>%
 pr_bernouilli <- function(cmax) {
   beta1 <- 2
   eta <- scale_this(cmax) * beta1 ## normalise to obtain reasonable range of probabilities.
-  pr <- 1 / (1 + exp(-eta))
+  pr <- 1 / (1 + exp(eta))
   rbinom(N, 1, pr)
 }
-
 
 simdat <- simdat %>%
   mutate(events = pr_bernouilli(cmax))
@@ -105,7 +104,6 @@ svmFit <-  ksvm(Class ~ . ,
             prob.model = TRUE, 
             cross = 10)
 
-
 ## Train logistic model using PK knowledge
 pk_training <- training %>%
   mutate(vc = pkpop_vc(bw, sex),
@@ -118,7 +116,7 @@ logistic <- train(factor(Class) ~ cmax,
                   method = "glm", 
                   preProcess = c("center", "scale"),
                   trControl = control)
-
+coef(logistic$finalModel)
 #-----------------------------------
 #  Compare between the two models
 #-----------------------------------
@@ -147,7 +145,7 @@ pred_svm <- predict_prob(svmFit, "ML")
 library(pROC) 
 
 test_auc <- function(prob) {
-  roc(testing$Class, prob)
+  roc(testing$Class, prob) 
 }
 
 # Use this function: 
@@ -295,7 +293,7 @@ pr_bernouilli_gene <- function(dat) {
   eta <- scale_this(dat$cmax) * beta1 
   eta <- eta + (  as.matrix( dat %>%
                                select(gene_marker))  %*% beta_gene  ) ## use R matrix multiplication
-  pr <- 1 / (1 + exp(-eta))
+  pr <- 1 / (1 + exp(eta))
   rbinom(N, 1, pr)
 }
 
@@ -327,17 +325,8 @@ testing_gene <- fitdat_gene[-inTrain, ]
 nrow(training_gene)
 nrow(testing_gene)
 
-control <- trainControl(method = "repeatedcv", 
-                        number = number , 
-                        repeats = repeats, 
-                        classProbs = TRUE, 
-                        savePredictions = "final", 
-                        index = createResample(training_gene$Class, repeats*number), 
-                        summaryFunction = multiClassSummary, 
-                        allowParallel = TRUE)
-
 ### Fit using ML method
-## A naive machine learning programmer considers that using the variables sex and age and a Suppot Vector Machine model is the best option for such a problem.
+## A naive Pk modeller has forgotten the course of dimensionality
 ## Train logistic model using PK knowledge
 pk_training_gene <- training_gene %>%
   mutate(vc = pkpop_vc(bw, sex),
@@ -369,3 +358,14 @@ logisticnet$bestTune
 
 # best coefficient
 coef(logisticnet$finalModel, logisticnet$bestTune$lambda)
+
+
+#### DAGs
+
+library(ggdag)
+pk_dag <- dagify( Y ~ Cmax + U, Cmax ~ Dose + VC, VC ~ Sex + Weight, Dose ~ Weight)
+pk_dag %>% ggdag() + theme_dag_blank()
+
+
+gene_dag <- dagify( Y ~ Cmax + U, Cmax ~ Dose + VC, VC ~ Sex + Weight, Dose ~ Weight)
+pk_dag %>% ggdag() + theme_dag_blank()
