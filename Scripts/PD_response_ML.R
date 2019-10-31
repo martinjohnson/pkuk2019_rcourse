@@ -122,8 +122,6 @@ coef(logistic$finalModel)
 #-----------------------------------
 
 # Function calculates probabilities: 
-# Function calculates probabilities: 
-
 predict_prob <- function(model_selected, modeller = c("ML", "PK")) {
     predict(model_selected, 
             testing %>%
@@ -141,7 +139,6 @@ pred_logistic <- predict_prob(logistic, "PK")
 pred_svm <- predict_prob(svmFit, "ML")
 
 # Function calculates AUC: 
-
 library(pROC) 
 
 test_auc <- function(prob) {

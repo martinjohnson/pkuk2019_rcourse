@@ -3,6 +3,7 @@ title: "PK modelling, Machine Learning and the caret package"
 author: "Carlos S Traynor"
 date: "28/10/2019"
 output: html_document
+bibliography: references.bib
 ---
 
 ```{r setup, include=FALSE}
@@ -22,10 +23,10 @@ Let's assume then the following model:
 ```{r}
 library(ggdag)
 pk_dag <- dagify( Y ~ Cmax + U, Cmax ~ Dose + VC, VC ~ Sex + Weight, Dose ~ Weight)
-pk_dag %>% ggdag() + theme_dag_blank()
+pk_dag %>% ggdag_dseparated(from = "Cmax", to = "Y") + theme_dag_blank()
 ```
 
-The model published:
+The model published [@bajaj2017model]:
 $$
 VC_{i} = VC_{ref} * \left (\frac{BW_i}{BW_{ref}}\right )^{VC_{BW}}  \cdot \left (e^{VC_{SEX}}\right )^{SEX} \\
 C_{max} = \frac{Dose}{VC_i}
@@ -246,13 +247,17 @@ lapply(list(auc_logistic, auc_svm), function(x) {x[["auc"]]})
 ```
 
 Or a more detailed report based on the test data:
+The PK modeller:
 ```{r}
-lapply(list(logistic, svmFit), 
-       function(model) {confusionMatrix(predict(model, testing %>% 
-                                                  mutate(vc = pkpop_vc(bw, sex),
-                                                         cmax = (dose / vc) ) %>%
-                                                  mutate_if(is_double, scale_this)
-                                                  ), testing$Class, positive = "Response")})
+confusionMatrix(predict(logistic, testing %>% 
+                      mutate(vc = pkpop_vc(bw, sex),
+                                 cmax = (dose / vc) ) %>%
+                                mutate_at("cmax", scale_this) ), testing$Class, positive = "Response")
+```
+
+```{r}
+confusionMatrix(predict(svmFit, testing %>%
+              mutate_if(is_double, scale_this) ), testing$Class, positive = "Response")
 ```
 
 ## But how do SVM work?
@@ -424,3 +429,4 @@ lasso_mod <- logisticnet$finalModel
 plot_lasso_norm(lasso_mod)
 ```
 
+# References
