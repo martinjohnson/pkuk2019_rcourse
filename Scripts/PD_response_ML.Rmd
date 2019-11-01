@@ -40,7 +40,6 @@ library(tidyverse)
 library(kernlab)
 library(pROC) 
 library(caret)
-source("Scripts/helpers.R")
 ```
 
 
@@ -89,6 +88,11 @@ simdat <- simdat %>%
 
 Finally we simulate the occurrence of the adverse event using a Bernoulli trial. 
 ```{r}
+## helper scale returns double
+scale_this <- function(x){
+  (x - mean(x, na.rm=TRUE)) / sd(x, na.rm=TRUE)
+}
+## helper transforms linear predictor to logistic scale
 pr_bernouilli <- function(cmax) {
   beta1 <- 2
   eta <- scale_this(cmax) * beta1 ## normalise to obtain reasonable range of probabilities.
@@ -211,10 +215,28 @@ coef(logistic$finalModel)
 
 Finally we must compare how both models performs.
 ```{r}
-## Calulate predicted probabilities
-pred_logistic <- predict_prob(logistic, "PK")
-pred_svm <- predict_prob(svmFit, "ML")
+## helper predicts probabilites
+predict_prob <- function(model_selected, testdata) {
+  predict(model_selected, 
+          testdata,
+          type = "prob") %>% 
+    as.data.frame() %>%
+    pull(Fail) %>%
+    return()
+}
 
+## Calulate predicted probabilities
+pred_logistic <- predict_prob(logistic, testing %>% 
+                                mutate(vc = pkpop_vc(bw, sex),
+                                       cmax = (dose / vc) ) %>%
+                                mutate_at("cmax", scale_this))
+pred_svm <- predict_prob(svmFit, testing %>%
+            mutate_if(is_double, scale_this) )
+
+# Function calculates AUC: 
+test_auc <- function(prob) {
+  roc(testing$Class, prob) 
+}
 
 # Calculate AUC
 auc_logistic <- test_auc(pred_logistic)
@@ -262,7 +284,7 @@ confusionMatrix(predict(svmFit, testing %>%
 
 ## But how do SVM work?
 
-SVM contruct an optimal separating hyperplane between two classes. 
+SVM construct an optimal separating hyperplane between two classes. 
 Let's visualise this with a simulation, here is the sample data:
 
 ```{r}
@@ -351,6 +373,17 @@ simdat[1:6, 1:6]
 
 As before we calculate the Cmax, and the probability of having an event.
 ```{r}
+## tweaked function to sample genes that are impacting to the outcome
+pr_bernouilli_gene <- function(dat) {
+  beta1 <- 2
+  gene_marker <- paste("gene_", sample(1:n_gene, 6), sep = "_")
+  beta_gene <- c(0.9, -0.2, 0.5, -2.2, 0.7,  1.5)
+  
+  eta <- scale_this(dat$cmax) * beta1 
+  eta <- eta + (  as.matrix( dat %>% select(gene_marker))  %*% beta_gene  ) ## use R matrix multiplication
+  pr <- 1 / (1 + exp(eta))
+  rbinom(N, 1, pr)
+}
 simdat <- simdat %>% 
   mutate(vc = pkpop_vc(bw, sex),
          dose = bw * 10^-3,
@@ -423,9 +456,31 @@ So how does it work?
 coef(logisticnet$finalModel, logisticnet$bestTune$lambda)
 ```
 
-
+There is a built in plot method in the glmnet package:
 ```{r}
 lasso_mod <- logisticnet$finalModel
+glmnet::plot.glmnet(lasso_mod)
+```
+
+Or we can design a function to create a ggplot, see in  [StackOverflow](https://stackoverflow.com/questions/48978179/r-plotting-lasso-beta-coefficients):
+
+```{r}
+plot_lasso_norm <- function(lasso_mod){
+  # best coefficient
+  beta=coef(lasso_mod)
+  tmp <- as.data.frame(as.matrix(beta))
+  tmp$coef <- row.names(tmp)
+  tmp <- reshape::melt(tmp, id = "coef")
+  tmp$variable <- as.numeric(gsub("s", "", tmp$variable))
+  tmp$lambda <- lasso_mod$lambda[tmp$variable+1] # extract the lambda values
+  tmp$norm <- apply(abs(beta[-1,]), 2, sum)[tmp$variable+1] # compute L1 norm
+  
+  ggplot(tmp[tmp$coef != "(Intercept)",], aes(norm, value, colour = coef)) + 
+    geom_line() + 
+    xlab("L1 norm") + 
+    theme_bw() + 
+    theme(legend.position = "none")
+}
 plot_lasso_norm(lasso_mod)
 ```
 
