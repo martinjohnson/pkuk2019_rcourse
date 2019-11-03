@@ -45,7 +45,7 @@ library(caret)
 
 Generating data from R is not difficult. Indeed R may be the best suited language to generate data using the many probability distribution available in **stats** **base** package, and other packages. 
 
-### 1.1 A binomial dataset
+### Simulation of a categorical outcome
 
 Simulate weight variable.
 
@@ -450,7 +450,6 @@ logisticnet <- train(factor(Class) ~ . - dose - sex - bw - vc,
                     tuneGrid = expand.grid(alpha = 1,lambda = seq(0.001,0.1,by = 0.001)))
 ```
 
-
 So how does it work?
 ```{r}
 coef(logisticnet$finalModel, logisticnet$bestTune$lambda)
@@ -483,5 +482,9 @@ plot_lasso_norm <- function(lasso_mod){
 }
 plot_lasso_norm(lasso_mod)
 ```
+
+# Exercise
+
+Use your knowledge in modelling and simulation in R to simulate the model discussed above [@bajaj2017model], where the outcome Y is a continuous variable (instead of Bernoulli). This could be for example the SLD or another continuous outcome affected by Cmax. Train the model using the caret package. Also, look in caret for a Machine Learning method for regression and apply it. Compare the predictions of both models using a performance measure for regression. Optional: the package **yardstick** could be useful to do so.
 
 # References
